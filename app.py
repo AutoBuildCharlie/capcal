@@ -119,23 +119,33 @@ CAPTION_STYLES = {
     'classic': {'font': 'Arial',       'size': 72, 'primary': '&H00FFFFFF', 'outline': '&H00000000', 'back': '&H80000000', 'bold': -1},
     'gold':    {'font': 'Arial Black', 'size': 76, 'primary': '&H0037B4F5', 'outline': '&H00200050', 'back': '&HA0000000', 'bold': -1},
     'bold':    {'font': 'Arial Black', 'size': 84, 'primary': '&H00FFFFFF', 'outline': '&H004C1D95', 'back': '&H80000000', 'bold': -1},
+    'minimal': {'font': 'Arial',       'size': 58, 'primary': '&H00FFFFFF', 'outline': '&H00000000', 'back': '&H00000000', 'bold':  0},
+    'neon':    {'font': 'Arial Black', 'size': 76, 'primary': '&H00F848F0', 'outline': '&H004C1D95', 'back': '&H80000000', 'bold': -1},
+    'shadow':  {'font': 'Arial',       'size': 72, 'primary': '&H00FFFFFF', 'outline': '&H00000000', 'back': '&HC0000000', 'bold': -1},
+    'pill':    {'font': 'Arial Black', 'size': 68, 'primary': '&H00FFFFFF', 'outline': '&H004C1D95', 'back': '&HFF200050', 'bold': -1},
+    'outline': {'font': 'Arial Black', 'size': 76, 'primary': '&H00000000', 'outline': '&H00FFFFFF', 'back': '&H00000000', 'bold': -1},
 }
 
 
-def generate_ass(words, style='classic') -> str:
+def generate_ass(words, style='classic', pos_x=0.5, pos_y=0.85) -> str:
     s = CAPTION_STYLES.get(style, CAPTION_STYLES['classic'])
+    # Convert position % to ASS coordinates (1080x1920)
+    ass_x = round(pos_x * 1080)
+    ass_y = round(pos_y * 1920)
+    pos_tag = f'{{\\an5\\pos({ass_x},{ass_y})}}'
+
     header = (
         f"[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 0\n\n"
         f"[V4+ Styles]\n"
         f"Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,{s['font']},{s['size']},{s['primary']},&H000000FF,{s['outline']},{s['back']},{s['bold']},0,0,0,100,100,0,0,1,3,1,2,10,10,120,1\n\n"
+        f"Style: Default,{s['font']},{s['size']},{s['primary']},&H000000FF,{s['outline']},{s['back']},{s['bold']},0,0,0,100,100,0,0,1,3,1,5,10,10,0,1\n\n"
         f"[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
     lines = ''
     for p in group_words(words):
         t0 = format_ass_time(p['start'])
         t1 = format_ass_time(p['end'])
-        lines += f"Dialogue: 0,{t0},{t1},Default,,0,0,0,,{p['text']}\n"
+        lines += f"Dialogue: 0,{t0},{t1},Default,,0,0,0,,{pos_tag}{p['text']}\n"
     return header + lines
 
 
@@ -249,19 +259,44 @@ def do_process(job_id: str, options: dict):
         if options.get('captions') and words:
             step('Burning captions...', 68)
             ass_path = job_dir / 'captions.ass'
-            ass_path.write_text(generate_ass(words, options.get('caption_style', 'classic')))
+            pos      = options.get('caption_pos', {'x': 0.5, 'y': 0.85})
+            ass_path.write_text(generate_ass(
+                words,
+                options.get('caption_style', 'classic'),
+                float(pos.get('x', 0.5)),
+                float(pos.get('y', 0.85)),
+            ))
             cap_out  = job_dir / 'captioned.mp4'
             ass_safe = str(ass_path).replace('\\', '/').replace(':', '\\:')
             run_ffmpeg(['-i', str(current), '-vf', f"ass='{ass_safe}'",
                         '-c:a', 'copy', '-y', str(cap_out)])
             current = cap_out
 
-        # 6 — Final encode
+        # 6 — Aspect ratio
+        aspect = options.get('aspect_ratio', '9:16')
+        scale_filter = None
+        if aspect == '1:1':
+            scale_filter = 'scale=1080:1080:force_original_aspect_ratio=decrease,pad=1080:1080:(ow-iw)/2:(oh-ih)/2:black'
+        elif aspect == '16:9':
+            scale_filter = 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black'
+
+        # 7 — Final encode
         step('Exporting...', 82)
+        quality_map = {
+            'low':    ('28', 'ultrafast'),
+            'medium': ('23', 'fast'),
+            'high':   ('18', 'slow'),
+        }
+        crf, preset = quality_map.get(options.get('quality', 'medium'), ('23', 'fast'))
         title = re.sub(r'[^\w\s-]', '', options.get('title', 'capcal')).strip().replace(' ', '_') or 'capcal'
         final = out_dir / f'{title}.mp4'
-        run_ffmpeg(['-i', str(current),
-                    '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+
+        vf_args = []
+        if scale_filter:
+            vf_args = ['-vf', scale_filter]
+
+        run_ffmpeg(['-i', str(current)] + vf_args + [
+                    '-c:v', 'libx264', '-preset', preset, '-crf', crf,
                     '-c:a', 'aac', '-b:a', '192k',
                     '-movflags', '+faststart',
                     '-y', str(final)])
@@ -356,6 +391,23 @@ def download(job_id):
     if not path.exists():
         return jsonify({'error': 'File not found'}), 404
     return send_file(str(path), as_attachment=True, download_name=path.name)
+
+
+@app.route('/api/thumbnail/<job_id>')
+def thumbnail(job_id):
+    t    = float(request.args.get('t', 0))
+    path = UPLOAD_DIR / job_id / 'original.mp4'
+    if not path.exists():
+        return jsonify({'error': 'Not found'}), 404
+    result = subprocess.run(
+        ['ffmpeg', '-ss', str(t), '-i', str(path),
+         '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', '-'],
+        capture_output=True
+    )
+    if not result.stdout:
+        return jsonify({'error': 'Could not extract frame'}), 500
+    from flask import Response
+    return Response(result.stdout, mimetype='image/png')
 
 
 @app.route('/api/cleanup/<job_id>', methods=['DELETE'])
