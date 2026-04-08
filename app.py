@@ -5,6 +5,7 @@ Premium mobile PWA for short-form content creators.
 
 import os
 import re
+import time
 import uuid
 import shutil
 import subprocess
@@ -30,7 +31,7 @@ DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY', '')
 
 # UUID v4 validation — prevents path traversal via crafted job_id
 _UUID_RE = re.compile(
-    r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z'
 )
 def valid_job_id(jid: str) -> bool:
     return bool(_UUID_RE.match(jid))
@@ -63,6 +64,9 @@ def is_valid_audio(file_storage) -> bool:
 _jobs = {}
 _lock = threading.Lock()
 
+_JOB_TTL    = 2 * 60 * 60   # 2 hours — evict finished/error jobs
+_MAX_JOBS   = 200            # hard cap — drop oldest completed job if exceeded
+
 def job_get(jid):
     with _lock:
         return dict(_jobs.get(jid, {}))
@@ -70,8 +74,33 @@ def job_get(jid):
 def job_set(jid, **kw):
     with _lock:
         if jid not in _jobs:
-            _jobs[jid] = {}
+            _jobs[jid] = {'_created': time.time()}
         _jobs[jid].update(kw)
+
+def _evict_old_jobs():
+    """Background thread: remove stale completed/error jobs older than TTL."""
+    while True:
+        time.sleep(300)  # run every 5 minutes
+        cutoff = time.time() - _JOB_TTL
+        with _lock:
+            to_remove = [
+                jid for jid, j in _jobs.items()
+                if j.get('status') in ('done', 'error')
+                and j.get('_created', 0) < cutoff
+            ]
+            for jid in to_remove:
+                _jobs.pop(jid, None)
+            # Hard cap: if still over limit, evict oldest completed jobs first
+            if len(_jobs) > _MAX_JOBS:
+                completed = sorted(
+                    ((jid, j['_created']) for jid, j in _jobs.items()
+                     if j.get('status') in ('done', 'error')),
+                    key=lambda x: x[1]
+                )
+                for jid, _ in completed[:len(_jobs) - _MAX_JOBS]:
+                    _jobs.pop(jid, None)
+
+threading.Thread(target=_evict_old_jobs, daemon=True, name='job-eviction').start()
 
 
 # ── FFmpeg helpers ─────────────────────────────────────────────────────────
@@ -111,7 +140,15 @@ def transcribe(audio_path: Path) -> list:
         content=data,
         timeout=120.0,
     )
-    resp.raise_for_status()   # raises on 4xx/5xx — surfaces bad API key, rate limits, etc.
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        app.logger.error('Deepgram HTTP error %s: %.300s',
+                         exc.response.status_code, exc.response.text)
+        raise RuntimeError(
+            f'Transcription service returned error {exc.response.status_code}. '
+            'Check your API key and account status.'
+        ) from exc
     words = []
     try:
         alts = resp.json()['results']['channels'][0]['alternatives']
@@ -125,7 +162,8 @@ def transcribe(audio_path: Path) -> list:
                 'is_filler': w.get('type') == 'filler',
             })
     except Exception as e:
-        raise RuntimeError(f'Deepgram parse error: {e} | body: {resp.text[:200]}')
+        app.logger.error('Deepgram parse error: %s | body: %.200s', e, resp.text)
+        raise RuntimeError('Transcription response was unreadable. Check server logs.')
     return words
 
 
@@ -314,7 +352,9 @@ def do_process(job_id: str, options: dict):
         res_x, res_y = _ASPECT_RES.get(aspect, (1080, 1920))
 
         vf_parts = []
-        if aspect == '1:1':
+        if aspect == '9:16':
+            vf_parts.append('scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black')
+        elif aspect == '1:1':
             vf_parts.append('scale=1080:1080:force_original_aspect_ratio=decrease,pad=1080:1080:(ow-iw)/2:(oh-ih)/2:black')
         elif aspect == '16:9':
             vf_parts.append('scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black')
@@ -435,7 +475,9 @@ def upload_music(job_id):
     music_file = request.files['music']
     if not is_valid_audio(music_file):
         return jsonify({'error': 'Invalid audio file format'}), 400
-    ext = Path(music_file.filename).suffix or '.mp3'
+    _ALLOWED_AUDIO_EXT = {'.mp3', '.m4a', '.aac', '.wav', '.ogg', '.flac'}
+    raw_ext = Path(music_file.filename).suffix.lower()
+    ext = raw_ext if raw_ext in _ALLOWED_AUDIO_EXT else '.mp3'
     music_file.save(str(job_dir / f'music{ext}'))
     job_set(job_id, music_ext=ext)
     return jsonify({'status': 'ok'})

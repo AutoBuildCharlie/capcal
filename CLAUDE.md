@@ -126,3 +126,6 @@ Stats (videos this week / all time) saved to `localStorage`.
 - Single HTML file — keeps deployment simple, no build step
 - In-memory job store — fine for single-user. Would need Redis for multi-user scale.
 - Port 5001 — avoids conflict with Zentara Studio (5000)
+- All three aspect ratios (9:16, 1:1, 16:9) now always apply a scale+pad filter — this guarantees the output resolution matches the ASS PlayResX/PlayResY coordinate space used for caption positioning. Without this, a 9:16 export of a non-1080x1920 source would misplace captions.
+- The `ass` filter path escape (`\:` for Windows drive colon) works correctly even inside a multi-filter `-vf` chain. FFmpeg's filter parser handles `\:` inside quoted strings as an escape for `:`, yielding the correct path.
+- The concat list file path (`str(concat)`) uses backslashes on Windows, which is fine — FFmpeg accepts backslash paths when passed directly via subprocess args. The content inside the file uses `.as_posix()` (forward slashes), which is what the concat demuxer requires.

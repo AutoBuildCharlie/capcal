@@ -592,7 +592,10 @@ function goToEditor(file) {
   video.src = URL.createObjectURL(file);
   document.getElementById('editor-filename').innerHTML = file.name + ' <span>— Editing</span>';
 
+  var metadataRan = false;
   function onMetadata() {
+    if (metadataRan) return;  // guard against duplicate calls (loadedmetadata + fallback timeout)
+    metadataRan = true;
     state.videoDuration = video.duration;
     state.trimStart = 0; state.trimEnd = video.duration;
     setupScrubber(); setupTrimSliders(); setupThumbScrubber();
@@ -787,16 +790,20 @@ function setupScrubber() {
   var scrubber = document.getElementById('video-scrubber');
   scrubber.max = video.duration; scrubber.step = 0.01;
   video.addEventListener('timeupdate', function() {
-    scrubber.value = video.currentTime;
+    if (!isScrubbing) scrubber.value = video.currentTime;  // don't overwrite thumb during debounce
     document.getElementById('time-display').textContent = fmtTime(video.currentTime)+' / '+fmtTime(video.duration);
   });
 }
 
 // Debounced seek — rapid seeks stall video on iPhone Safari
+// scrubbing flag prevents timeupdate from snapping the thumb back during the debounce window
+var isScrubbing = false;
 function scrubVideo(v) {
+  isScrubbing = true;
   clearTimeout(scrubDebounce);
   scrubDebounce = setTimeout(function() {
     document.getElementById('editor-video').currentTime = parseFloat(v);
+    isScrubbing = false;
   }, 50);
 }
 
@@ -882,7 +889,9 @@ function fetchThumbnail(t) {
       img.src = URL.createObjectURL(blob);
       img.style.display = 'block';
     })
-    .catch(function() {});
+    .catch(function() {
+      document.getElementById('thumb-time').textContent = 'Could not load frame. Try a different time.';
+    });
 }
 
 function downloadThumbnail() {
@@ -921,6 +930,10 @@ function startTranscriptPoll() {
   }, 2000);
 }
 
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function renderWordList() {
   var list = document.getElementById('word-list');
   if (!state.words.length) {
@@ -928,17 +941,25 @@ function renderWordList() {
     return;
   }
   list.innerHTML = state.words.map(function(w,i) {
-    return '<span class="word-chip ' + (w.is_filler?'filler':'') + '" onclick="toggleFiller(' + i + ')">' + w.word + '</span>';
+    return '<span class="word-chip ' + (w.is_filler?'filler':'') + '" onclick="toggleFiller(' + i + ')">' + escHtml(w.word) + '</span>';
   }).join('');
 }
 
-function toggleFiller(i) { state.words[i].is_filler = !state.words[i].is_filler; renderWordList(); }
+function toggleFiller(i) {
+  if (i < 0 || i >= state.words.length) return;  // guard stale index if words updated between render and click
+  state.words[i].is_filler = !state.words[i].is_filler;
+  renderWordList();
+}
 
 // ── Music ──────────────────────────────────────────────────────────────────
 function onMusicSelect(e) {
   var file = e.target.files[0]; if (!file) return;
   if (!state.jobId) {
-    e.target.value = '';
+    // Reset via clone — iOS Safari won't re-fire change for the same file if we just set value=''
+    // The cloned node inherits the onchange attribute, so no extra listener needed
+    var inp = e.target;
+    var clone = inp.cloneNode(true);
+    inp.parentNode.replaceChild(clone, inp);
     alert('Please upload a video first before adding music.');
     return;
   }
@@ -995,11 +1016,13 @@ function startExport() {
 function pollProcessing() {
   if (processingPollId) clearInterval(processingPollId);
   var retries = 0;
-  var MAX_RETRIES = 80;  // 80 × 1.5s = 2 min timeout
+  var MAX_RETRIES = 240;  // 240 × 1.5s = 6 min — heavy exports (silence removal + captions + high quality) can take 3-4 min
   processingPollId = setInterval(function() {
     if (!state.jobId) { clearInterval(processingPollId); processingPollId = null; return; }
     if (++retries > MAX_RETRIES) {
       clearInterval(processingPollId); processingPollId = null;
+      var btn = document.getElementById('btn-export');
+      btn.disabled = false; btn.textContent = 'Export Video';
       alert('Export is taking too long. Please try again.');
       goTo('editor'); startCaptionCanvas(); return;
     }
@@ -1014,6 +1037,8 @@ function pollProcessing() {
         }
         if (data.status === 'error') {
           clearInterval(processingPollId); processingPollId = null;
+          var btn = document.getElementById('btn-export');
+          btn.disabled = false; btn.textContent = 'Export Video';
           alert('Something went wrong: ' + (data.error || 'Unknown error'));
           goTo('editor'); startCaptionCanvas();
         }
@@ -1058,7 +1083,11 @@ function downloadVideo() {
         throw new Error('canShare false');
       })
       .then(function() { setTimeout(function() { cleanup(); }, 5000); })
-      .catch(function() { fallbackDownload(url); });
+      .catch(function(err) {
+        // AbortError = user cancelled share sheet - don't force a download
+        if (err && err.name === 'AbortError') return;
+        fallbackDownload(url);
+      });
     return;
   }
   fallbackDownload(url);
@@ -1090,7 +1119,8 @@ function editAnother() {
 
   var video = document.getElementById('editor-video');
   if (video.src && video.src.startsWith('blob:')) URL.revokeObjectURL(video.src);
-  video.src = '';
+  video.removeAttribute('src');
+  video.load();  // abort pending decode and cancel any network request
   document.getElementById('play-btn').textContent = '▶';
 
   // Full state reset
@@ -1112,7 +1142,8 @@ function editAnother() {
   document.getElementById('toggle-captions').classList.add('on');
   document.getElementById('caption-drag-handle').classList.remove('visible');
   document.querySelectorAll('.cap-style').forEach(function(c) { c.classList.remove('selected'); });
-  document.querySelector('.cap-style[data-style="classic"]').classList.add('selected');
+  var classicEl = document.querySelector('.cap-style[data-style="classic"]');
+  if (classicEl) classicEl.classList.add('selected');
   document.querySelectorAll('#steps-list .step-item').forEach(function(s) {
     s.classList.remove('active','done'); s.querySelector('.step-dot').textContent='';
   });
