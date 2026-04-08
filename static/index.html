@@ -1,0 +1,1455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#07071a">
+  <title>CapCal</title>
+  <link rel="manifest" href="/manifest.json">
+  <style>
+    /* ── Variables ─────────────────────────────────────────────────── */
+    :root {
+      --bg:          #07071a;
+      --surface:     #0d0d24;
+      --card:        #12122e;
+      --border:      #1e1e42;
+      --purple:      #7c3aed;
+      --purple-l:    #a855f7;
+      --purple-dim:  #4c1d95;
+      --purple-glow: rgba(124,58,237,0.45);
+      --gold:        #d4af37;
+      --gold-l:      #f0c848;
+      --gold-glow:   rgba(212,175,55,0.4);
+      --white:       #ffffff;
+      --text:        #f0f0ff;
+      --text-2:      #8888bb;
+      --text-3:      #44446a;
+      --success:     #22c55e;
+      --danger:      #ef4444;
+      --radius:      18px;
+      --radius-sm:   10px;
+    }
+
+    /* ── Reset ─────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+    button { cursor: pointer; border: none; background: none; font-family: inherit; color: inherit; }
+    input, textarea { font-family: inherit; color: inherit; }
+
+    /* ── Animations ────────────────────────────────────────────────── */
+    @keyframes fadeUp   { from { opacity:0; transform:translateY(24px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes fadeIn   { from { opacity:0; } to { opacity:1; } }
+    @keyframes slideUp  { from { opacity:0; transform:translateY(60px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes pulse    { 0%,100% { box-shadow:0 0 0 0 var(--pulse-c); } 60% { box-shadow:0 0 0 14px transparent; } }
+    @keyframes spin     { to { transform:rotate(360deg); } }
+    @keyframes rotateBorder { to { --angle: 360deg; } }
+    @keyframes shimmer  { 0% { background-position:-200% 0; } 100% { background-position:200% 0; } }
+    @keyframes float    { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-8px); } }
+    @keyframes glow     { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
+    @keyframes stepIn   { from { opacity:0; transform:translateX(-16px); } to { opacity:1; transform:translateX(0); } }
+    @keyframes checkPop { 0% { transform:scale(0); } 60% { transform:scale(1.3); } 100% { transform:scale(1); } }
+    @keyframes barWave  {
+      0%,100% { height:8px; }
+      50%     { height:32px; }
+    }
+    @keyframes borderSpin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── Screen system ─────────────────────────────────────────────── */
+    #app { width:100vw; height:100vh; position:relative; overflow:hidden; }
+    .screen {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.35s ease, transform 0.35s ease;
+      transform: translateY(20px);
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+    }
+    .screen.active {
+      opacity: 1;
+      pointer-events: all;
+      transform: translateY(0);
+    }
+
+    /* ── Particles canvas ──────────────────────────────────────────── */
+    #particles {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Back button ───────────────────────────────────────────────── */
+    .back-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-2);
+      font-size: 14px;
+      padding: 20px 20px 0;
+      z-index: 10;
+      flex-shrink: 0;
+    }
+    .back-btn:hover { color: var(--text); }
+
+    /* ── Buttons ───────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 16px 28px;
+      border-radius: var(--radius);
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      transition: all 0.2s;
+    }
+    .btn-gold {
+      background: linear-gradient(135deg, var(--gold), var(--gold-l));
+      color: #0a0a1a;
+      --pulse-c: var(--gold-glow);
+      animation: pulse 2.4s infinite;
+    }
+    .btn-gold:hover { transform: translateY(-2px); box-shadow: 0 8px 30px var(--gold-glow); }
+    .btn-gold:active { transform: scale(0.97); }
+    .btn-purple {
+      background: linear-gradient(135deg, var(--purple), var(--purple-l));
+      color: white;
+    }
+    .btn-purple:hover { transform: translateY(-2px); box-shadow: 0 8px 24px var(--purple-glow); }
+    .btn-outline {
+      border: 1.5px solid var(--border);
+      color: var(--text-2);
+      border-radius: var(--radius-sm);
+    }
+    .btn-outline:hover { border-color: var(--purple-l); color: var(--text); }
+    .btn-sm { padding: 10px 18px; font-size: 13px; border-radius: var(--radius-sm); }
+    .btn-full { width: 100%; }
+    .btn-danger { background: var(--danger); color: white; }
+
+    /* ── Toggle ────────────────────────────────────────────────────── */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .toggle-row:last-child { border-bottom: none; }
+    .toggle-label { font-size: 14px; color: var(--text-2); }
+    .toggle-label strong { display: block; color: var(--text); font-size: 15px; margin-bottom: 2px; }
+    .switch {
+      width: 50px;
+      height: 28px;
+      background: var(--border);
+      border-radius: 14px;
+      position: relative;
+      cursor: pointer;
+      transition: background 0.3s;
+      flex-shrink: 0;
+    }
+    .switch.on { background: var(--purple); }
+    .switch::after {
+      content: '';
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      background: white;
+      border-radius: 50%;
+      top: 3px;
+      left: 3px;
+      transition: transform 0.3s;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    .switch.on::after { transform: translateX(22px); }
+
+    /* ── Card ──────────────────────────────────────────────────────── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+    .card-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: var(--text-3);
+      margin-bottom: 14px;
+    }
+
+    /* ── Section title ─────────────────────────────────────────────── */
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: var(--text-3);
+      margin-bottom: 12px;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       SCREEN 1 — HOME
+    ══════════════════════════════════════════════════════════════════ */
+    #screen-home {
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      padding: 40px 24px;
+      z-index: 1;
+    }
+
+    .home-logo {
+      font-size: 52px;
+      font-weight: 900;
+      letter-spacing: -2px;
+      background: linear-gradient(135deg, var(--purple-l) 0%, var(--gold) 60%, var(--gold-l) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: float 4s ease-in-out infinite;
+      margin-bottom: 8px;
+    }
+    .home-sub {
+      font-size: 16px;
+      color: var(--text-2);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 52px;
+    }
+    .home-cta {
+      font-size: 18px;
+      padding: 18px 48px;
+      border-radius: 50px;
+      margin-bottom: 40px;
+      width: 100%;
+      max-width: 320px;
+    }
+    .home-stats {
+      display: flex;
+      gap: 14px;
+      width: 100%;
+      max-width: 340px;
+    }
+    .stat-card {
+      flex: 1;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      text-align: center;
+      animation: fadeUp 0.6s ease both;
+    }
+    .stat-card:nth-child(2) { animation-delay: 0.1s; }
+    .stat-num {
+      font-size: 28px;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--gold), var(--gold-l));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .stat-label { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       SCREEN 2 — UPLOAD
+    ══════════════════════════════════════════════════════════════════ */
+    #screen-upload {
+      padding-bottom: 40px;
+      z-index: 1;
+    }
+    .upload-header {
+      padding: 0 24px 24px;
+      flex-shrink: 0;
+    }
+    .upload-header h1 {
+      font-size: 28px;
+      font-weight: 800;
+      margin-top: 16px;
+    }
+    .upload-header p { font-size: 14px; color: var(--text-2); margin-top: 6px; }
+
+    .upload-zone {
+      margin: 0 24px;
+      position: relative;
+      border-radius: var(--radius);
+      padding: 2px;
+      overflow: hidden;
+    }
+    .upload-zone::before {
+      content: '';
+      position: absolute;
+      inset: -50%;
+      background: conic-gradient(
+        from var(--angle, 0deg),
+        var(--purple) 0deg,
+        var(--gold) 120deg,
+        var(--purple-l) 240deg,
+        var(--purple) 360deg
+      );
+      animation: borderSpin 3s linear infinite;
+    }
+    @property --angle {
+      syntax: '<angle>';
+      initial-value: 0deg;
+      inherits: false;
+    }
+    .upload-zone-inner {
+      position: relative;
+      background: var(--card);
+      border-radius: 16px;
+      padding: 52px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .upload-zone-inner:hover { background: var(--surface); }
+    .upload-icon {
+      font-size: 52px;
+      margin-bottom: 16px;
+      display: block;
+    }
+    .upload-zone-inner h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .upload-zone-inner p { font-size: 13px; color: var(--text-3); }
+
+    #file-input { display: none; }
+
+    .upload-selected {
+      margin: 16px 24px 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      display: none;
+    }
+    .upload-selected.show { display: flex; }
+    .upload-selected-icon { font-size: 24px; }
+    .upload-selected-info { flex: 1; min-width: 0; }
+    .upload-selected-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .upload-selected-size { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+
+    .upload-progress-wrap {
+      margin: 16px 24px 0;
+      display: none;
+    }
+    .upload-progress-wrap.show { display: block; }
+    .upload-progress-label { font-size: 13px; color: var(--text-2); margin-bottom: 8px; }
+    .progress-bar {
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--purple), var(--gold));
+      border-radius: 3px;
+      transition: width 0.4s ease;
+      width: 0%;
+    }
+
+    .upload-btn-wrap { padding: 24px; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       SCREEN 3 — EDITOR
+    ══════════════════════════════════════════════════════════════════ */
+    #screen-editor {
+      flex-direction: column;
+      z-index: 1;
+    }
+    .editor-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .editor-filename {
+      flex: 1;
+      font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .editor-filename span { color: var(--text-3); font-weight: 400; }
+
+    /* Video preview */
+    .video-wrap {
+      position: relative;
+      background: #000;
+      flex-shrink: 0;
+    }
+    #editor-video {
+      width: 100%;
+      max-height: 38vh;
+      display: block;
+      object-fit: contain;
+    }
+    .video-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .play-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--purple);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      flex-shrink: 0;
+      transition: transform 0.15s;
+    }
+    .play-btn:active { transform: scale(0.9); }
+    .time-display { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+    .video-scrubber { flex: 1; -webkit-appearance: none; appearance: none; height: 3px; background: var(--border); border-radius: 2px; outline: none; }
+    .video-scrubber::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--gold); cursor: pointer; }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab {
+      flex: 1;
+      padding: 13px 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-3);
+      text-align: center;
+      letter-spacing: 0.5px;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .tab.active { color: var(--gold); border-bottom-color: var(--gold); }
+
+    /* Tab panels */
+    .tab-panels { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    .tab-panel { display: none; padding: 20px; }
+    .tab-panel.active { display: block; }
+
+    /* Trim panel */
+    .trim-slider-group { margin-bottom: 20px; }
+    .trim-slider-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      color: var(--text-2);
+      margin-bottom: 10px;
+    }
+    .trim-slider-label span { color: var(--gold); font-weight: 600; }
+    input[type=range].trim-slider {
+      width: 100%;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      outline: none;
+    }
+    input[type=range].trim-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--purple), var(--purple-l));
+      cursor: pointer;
+      box-shadow: 0 0 8px var(--purple-glow);
+    }
+
+    /* Caption styles */
+    .caption-style-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .cap-style {
+      flex: 1;
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px 8px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .cap-style.selected { border-color: var(--gold); background: rgba(212,175,55,0.08); }
+    .cap-style-preview { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+    .cap-style-name { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.8px; }
+    .cap-style[data-style="classic"] .cap-style-preview { color: white; text-shadow: 0 0 3px black; }
+    .cap-style[data-style="gold"] .cap-style-preview { color: var(--gold); text-shadow: 0 0 8px var(--gold-glow); }
+    .cap-style[data-style="bold"] .cap-style-preview { color: white; font-size: 18px; }
+
+    /* Word list */
+    .word-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      max-height: 160px;
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+    .word-chip {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .word-chip:hover { border-color: var(--purple-l); }
+    .word-chip.filler { opacity: 0.4; text-decoration: line-through; }
+    .word-chip.filler:hover { opacity: 0.8; }
+
+    /* Music upload */
+    .music-upload-zone {
+      border: 1.5px dashed var(--border);
+      border-radius: var(--radius-sm);
+      padding: 24px;
+      text-align: center;
+      cursor: pointer;
+      margin-top: 12px;
+      transition: all 0.2s;
+    }
+    .music-upload-zone:hover { border-color: var(--purple-l); background: rgba(124,58,237,0.05); }
+    .music-upload-zone p { font-size: 13px; color: var(--text-3); margin-top: 6px; }
+    #music-input { display: none; }
+    .music-selected { margin-top: 12px; display: none; }
+    .music-selected.show { display: flex; align-items: center; gap: 10px; }
+
+    /* Export panel */
+    .export-input {
+      width: 100%;
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      font-size: 15px;
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.2s;
+      margin-bottom: 20px;
+    }
+    .export-input:focus { border-color: var(--purple-l); }
+    .export-input::placeholder { color: var(--text-3); }
+    .export-btn {
+      font-size: 18px;
+      padding: 20px;
+      border-radius: var(--radius);
+      letter-spacing: 1px;
+    }
+
+    /* Transcribing state in editor */
+    .transcribing-banner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(124,58,237,0.1);
+      border: 1px solid rgba(124,58,237,0.3);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: var(--purple-l);
+    }
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(124,58,237,0.3);
+      border-top-color: var(--purple-l);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       SCREEN 4 — PROCESSING
+    ══════════════════════════════════════════════════════════════════ */
+    #screen-processing {
+      align-items: center;
+      justify-content: center;
+      padding: 40px 24px;
+      z-index: 1;
+    }
+    .processing-logo {
+      font-size: 40px;
+      font-weight: 900;
+      background: linear-gradient(135deg, var(--purple-l), var(--gold));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: glow 2s ease-in-out infinite;
+      margin-bottom: 32px;
+    }
+    .waveform {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      height: 40px;
+      margin-bottom: 36px;
+    }
+    .wave-bar {
+      width: 4px;
+      background: linear-gradient(to top, var(--purple), var(--gold));
+      border-radius: 2px;
+      animation: barWave 1.2s ease-in-out infinite;
+    }
+    .wave-bar:nth-child(2) { animation-delay: 0.1s; }
+    .wave-bar:nth-child(3) { animation-delay: 0.2s; }
+    .wave-bar:nth-child(4) { animation-delay: 0.3s; }
+    .wave-bar:nth-child(5) { animation-delay: 0.4s; }
+    .wave-bar:nth-child(6) { animation-delay: 0.3s; }
+    .wave-bar:nth-child(7) { animation-delay: 0.2s; }
+    .wave-bar:nth-child(8) { animation-delay: 0.1s; }
+
+    .steps-list { width: 100%; max-width: 320px; margin-bottom: 32px; }
+    .step-item {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+      opacity: 0.35;
+      transition: opacity 0.4s;
+    }
+    .step-item:last-child { border-bottom: none; }
+    .step-item.active { opacity: 1; animation: stepIn 0.4s ease; }
+    .step-item.done { opacity: 1; }
+    .step-dot {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      flex-shrink: 0;
+      transition: all 0.3s;
+    }
+    .step-item.active .step-dot { border-color: var(--purple-l); background: rgba(124,58,237,0.15); }
+    .step-item.done .step-dot { border-color: var(--success); background: var(--success); animation: checkPop 0.4s ease; }
+    .step-text { font-size: 14px; color: var(--text-2); }
+    .step-item.active .step-text, .step-item.done .step-text { color: var(--text); }
+
+    .processing-progress { width: 100%; max-width: 320px; }
+    .processing-progress .progress-fill { background: linear-gradient(90deg, var(--purple), var(--gold-l)); }
+    .processing-pct { font-size: 13px; color: var(--text-3); text-align: right; margin-top: 8px; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       SCREEN 5 — DONE
+    ══════════════════════════════════════════════════════════════════ */
+    #screen-done {
+      align-items: center;
+      justify-content: center;
+      padding: 40px 24px;
+      z-index: 1;
+    }
+    #confetti-canvas {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 50;
+    }
+    .done-icon {
+      width: 80px;
+      height: 80px;
+      background: linear-gradient(135deg, var(--purple), var(--gold));
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 36px;
+      margin-bottom: 24px;
+      animation: float 3s ease-in-out infinite;
+      box-shadow: 0 0 40px var(--purple-glow), 0 0 80px var(--gold-glow);
+    }
+    .done-title {
+      font-size: 28px;
+      font-weight: 800;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    .done-sub {
+      font-size: 14px;
+      color: var(--text-2);
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    .done-actions { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 320px; }
+    .done-actions .btn-gold { font-size: 18px; padding: 20px; }
+  </style>
+</head>
+<body>
+
+<canvas id="particles"></canvas>
+<canvas id="confetti-canvas" style="display:none;"></canvas>
+
+<div id="app">
+
+  <!-- ── SCREEN 1: HOME ──────────────────────────────────────────── -->
+  <div class="screen active" id="screen-home">
+    <div class="home-logo">CapCal</div>
+    <div class="home-sub">Edit. Caption. Post.</div>
+
+    <button class="btn btn-gold home-cta" onclick="goTo('upload')">
+      Start Editing
+    </button>
+
+    <div class="home-stats">
+      <div class="stat-card">
+        <div class="stat-num" id="stat-week">0</div>
+        <div class="stat-label">This week</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" id="stat-total">0</div>
+        <div class="stat-label">All time</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SCREEN 2: UPLOAD ──────────────────────────────────────── -->
+  <div class="screen" id="screen-upload">
+    <button class="back-btn" onclick="goTo('home')">← Back</button>
+
+    <div class="upload-header">
+      <h1>Upload Your Video</h1>
+      <p>Select a video from your camera roll to get started.</p>
+    </div>
+
+    <div class="upload-zone" onclick="document.getElementById('file-input').click()">
+      <div class="upload-zone-inner">
+        <span class="upload-icon">🎬</span>
+        <h3>Tap to select a video</h3>
+        <p>.mp4 · .mov · .avi · .mkv</p>
+      </div>
+    </div>
+    <input type="file" id="file-input" accept="video/*" onchange="onFileSelect(event)">
+
+    <div class="upload-selected" id="upload-selected">
+      <span class="upload-selected-icon">📹</span>
+      <div class="upload-selected-info">
+        <div class="upload-selected-name" id="upload-filename">—</div>
+        <div class="upload-selected-size" id="upload-filesize">—</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="document.getElementById('file-input').click()">Change</button>
+    </div>
+
+    <div class="upload-progress-wrap" id="upload-progress-wrap">
+      <div class="upload-progress-label" id="upload-progress-label">Uploading...</div>
+      <div class="progress-bar"><div class="progress-fill" id="upload-progress-fill"></div></div>
+    </div>
+
+    <div class="upload-btn-wrap">
+      <button class="btn btn-gold btn-full" id="btn-upload" onclick="startUpload()" disabled>
+        Upload & Analyze
+      </button>
+    </div>
+  </div>
+
+  <!-- ── SCREEN 3: EDITOR ──────────────────────────────────────── -->
+  <div class="screen" id="screen-editor">
+    <div class="editor-header">
+      <button class="back-btn" style="padding:0" onclick="confirmBack()">←</button>
+      <div class="editor-filename" id="editor-filename">video.mp4</div>
+    </div>
+
+    <div class="video-wrap">
+      <video id="editor-video" playsinline preload="metadata"></video>
+    </div>
+
+    <div class="video-controls">
+      <button class="play-btn" id="play-btn" onclick="togglePlay()">▶</button>
+      <span class="time-display" id="time-display">0:00 / 0:00</span>
+      <input type="range" class="video-scrubber" id="video-scrubber" min="0" max="100" value="0" step="0.1" oninput="scrubVideo(this.value)">
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('trim')">Trim</div>
+      <div class="tab" onclick="switchTab('captions')">Captions</div>
+      <div class="tab" onclick="switchTab('audio')">Audio</div>
+      <div class="tab" onclick="switchTab('export')">Export</div>
+    </div>
+
+    <div class="tab-panels">
+
+      <!-- Trim -->
+      <div class="tab-panel active" id="panel-trim">
+        <p class="section-title">Set In & Out Points</p>
+        <div class="trim-slider-group">
+          <div class="trim-slider-label">Start <span id="trim-start-val">0:00</span></div>
+          <input type="range" class="trim-slider" id="trim-start" min="0" max="100" value="0" step="0.1" oninput="updateTrim()">
+        </div>
+        <div class="trim-slider-group">
+          <div class="trim-slider-label">End <span id="trim-end-val">0:00</span></div>
+          <input type="range" class="trim-slider" id="trim-end" min="0" max="100" value="100" step="0.1" oninput="updateTrim()">
+        </div>
+        <p style="font-size:12px;color:var(--text-3);margin-top:8px;">Drag to set the clip you want to keep.</p>
+      </div>
+
+      <!-- Captions -->
+      <div class="tab-panel" id="panel-captions">
+        <div class="toggle-row" style="margin-bottom:16px;">
+          <div class="toggle-label">
+            <strong>Auto Captions</strong>
+            Word-by-word, synced to your voice.
+          </div>
+          <div class="switch on" id="toggle-captions" onclick="toggleSwitch(this)"></div>
+        </div>
+
+        <p class="section-title">Style</p>
+        <div class="caption-style-row">
+          <div class="cap-style selected" data-style="classic" onclick="selectCaptionStyle(this)">
+            <div class="cap-style-preview">Aa</div>
+            <div class="cap-style-name">Classic</div>
+          </div>
+          <div class="cap-style" data-style="gold" onclick="selectCaptionStyle(this)">
+            <div class="cap-style-preview">Aa</div>
+            <div class="cap-style-name">Gold</div>
+          </div>
+          <div class="cap-style" data-style="bold" onclick="selectCaptionStyle(this)">
+            <div class="cap-style-preview">Aa</div>
+            <div class="cap-style-name">Bold</div>
+          </div>
+        </div>
+
+        <p class="section-title">Transcript</p>
+        <div class="transcribing-banner" id="transcribing-banner" style="display:none;">
+          <div class="spinner"></div>
+          Analyzing your audio. This takes about 20 seconds.
+        </div>
+        <div class="word-list" id="word-list">
+          <p style="font-size:13px;color:var(--text-3);">Transcript will appear here.</p>
+        </div>
+      </div>
+
+      <!-- Audio -->
+      <div class="tab-panel" id="panel-audio">
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <strong>Remove Silences</strong>
+            Cuts dead air and long pauses.
+          </div>
+          <div class="switch" id="toggle-silence" onclick="toggleSwitch(this)"></div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <strong>Noise Reduction</strong>
+            Removes background hum and wind.
+          </div>
+          <div class="switch" id="toggle-noise" onclick="toggleSwitch(this)"></div>
+        </div>
+
+        <p class="section-title" style="margin-top:20px;">Background Music</p>
+        <div class="toggle-row" style="margin-bottom:0;">
+          <div class="toggle-label">
+            <strong>Add Music</strong>
+            Plays quietly under your voice.
+          </div>
+          <div class="switch" id="toggle-music" onclick="toggleSwitch(this)"></div>
+        </div>
+        <div class="music-upload-zone" onclick="document.getElementById('music-input').click()">
+          <span style="font-size:28px;">🎵</span>
+          <p>Tap to upload a music file</p>
+          <p>.mp3 · .m4a · .wav</p>
+        </div>
+        <input type="file" id="music-input" accept="audio/*" onchange="onMusicSelect(event)">
+        <div class="music-selected" id="music-selected">
+          <span>🎵</span>
+          <span id="music-filename" style="font-size:13px;color:var(--text-2);"></span>
+        </div>
+      </div>
+
+      <!-- Export -->
+      <div class="tab-panel" id="panel-export">
+        <p class="section-title">Video Title</p>
+        <input type="text" class="export-input" id="export-title" placeholder="Give your video a name">
+
+        <p class="section-title">Summary</p>
+        <div class="card" style="margin-bottom:24px;font-size:13px;line-height:1.8;color:var(--text-2);" id="export-summary">
+          Configure your options above, then export.
+        </div>
+
+        <button class="btn btn-gold btn-full export-btn" onclick="startExport()">
+          Export Video
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── SCREEN 4: PROCESSING ──────────────────────────────────── -->
+  <div class="screen" id="screen-processing">
+    <div class="processing-logo">CapCal</div>
+
+    <div class="waveform">
+      <div class="wave-bar"></div>
+      <div class="wave-bar"></div>
+      <div class="wave-bar"></div>
+      <div class="wave-bar"></div>
+      <div class="wave-bar"></div>
+      <div class="wave-bar"></div>
+      <div class="wave-bar"></div>
+      <div class="wave-bar"></div>
+    </div>
+
+    <div class="steps-list" id="steps-list">
+      <div class="step-item" data-step="Trimming video...">
+        <div class="step-dot"></div>
+        <div class="step-text">Trimming</div>
+      </div>
+      <div class="step-item" data-step="Removing silences...">
+        <div class="step-dot"></div>
+        <div class="step-text">Removing silences</div>
+      </div>
+      <div class="step-item" data-step="Cleaning audio...">
+        <div class="step-dot"></div>
+        <div class="step-text">Cleaning audio</div>
+      </div>
+      <div class="step-item" data-step="Adding music...">
+        <div class="step-dot"></div>
+        <div class="step-text">Adding music</div>
+      </div>
+      <div class="step-item" data-step="Burning captions...">
+        <div class="step-dot"></div>
+        <div class="step-text">Burning captions</div>
+      </div>
+      <div class="step-item" data-step="Exporting...">
+        <div class="step-dot"></div>
+        <div class="step-text">Exporting</div>
+      </div>
+    </div>
+
+    <div class="processing-progress">
+      <div class="progress-bar"><div class="progress-fill" id="processing-fill"></div></div>
+      <div class="processing-pct" id="processing-pct">0%</div>
+    </div>
+  </div>
+
+  <!-- ── SCREEN 5: DONE ─────────────────────────────────────────── -->
+  <div class="screen" id="screen-done">
+    <div class="done-icon">✓</div>
+    <div class="done-title">Your video is ready.</div>
+    <div class="done-sub" id="done-sub">Ready to download.</div>
+
+    <div class="done-actions">
+      <button class="btn btn-gold btn-full" id="btn-download" onclick="downloadVideo()">
+        Download Video
+      </button>
+      <button class="btn btn-outline btn-full" onclick="editAnother()">
+        Edit Another
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const state = {
+  jobId:         null,
+  filename:      '',
+  videoDuration: 0,
+  trimStart:     0,
+  trimEnd:       0,
+  captionStyle:  'classic',
+  words:         [],
+  musicFile:     null,
+  pollTimer:     null,
+  stats:         JSON.parse(localStorage.getItem('cc_stats') || '{"week":0,"total":0,"weekStart":""}'),
+};
+
+// ── Stats ──────────────────────────────────────────────────────────────────
+function checkWeekReset() {
+  const now  = new Date();
+  const mon  = new Date(now);
+  mon.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  mon.setHours(0,0,0,0);
+  const monStr = mon.toISOString();
+  if (state.stats.weekStart !== monStr) {
+    state.stats.week      = 0;
+    state.stats.weekStart = monStr;
+    saveStats();
+  }
+}
+function saveStats() { localStorage.setItem('cc_stats', JSON.stringify(state.stats)); }
+function refreshStats() {
+  checkWeekReset();
+  document.getElementById('stat-week').textContent  = state.stats.week;
+  document.getElementById('stat-total').textContent = state.stats.total;
+}
+
+// ── Screen navigation ──────────────────────────────────────────────────────
+function goTo(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+}
+
+function confirmBack() {
+  if (confirm('Leave the editor? Your upload will be lost.')) {
+    if (state.jobId) cleanup();
+    goTo('home');
+  }
+}
+
+// ── Particles (home background) ────────────────────────────────────────────
+(function initParticles() {
+  const canvas = document.getElementById('particles');
+  const ctx    = canvas.getContext('2d');
+  let W, H, dots = [];
+
+  function resize() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+  function makeDot() {
+    return {
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.5 + 0.5,
+      dx: (Math.random() - 0.5) * 0.3,
+      dy: (Math.random() - 0.5) * 0.3,
+      a: Math.random(),
+    };
+  }
+  function init() {
+    resize();
+    dots = Array.from({length: 60}, makeDot);
+  }
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const homeActive = document.getElementById('screen-home').classList.contains('active');
+    if (!homeActive) { requestAnimationFrame(draw); return; }
+    dots.forEach(d => {
+      d.x += d.dx; d.y += d.dy;
+      if (d.x < 0) d.x = W; if (d.x > W) d.x = 0;
+      if (d.y < 0) d.y = H; if (d.y > H) d.y = 0;
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, d.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(168,85,247,${d.a * 0.5})`;
+      ctx.fill();
+    });
+    requestAnimationFrame(draw);
+  }
+  window.addEventListener('resize', resize);
+  init(); draw();
+})();
+
+// ── Confetti ───────────────────────────────────────────────────────────────
+function launchConfetti() {
+  const canvas = document.getElementById('confetti-canvas');
+  const ctx    = canvas.getContext('2d');
+  canvas.style.display = 'block';
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  const colors = ['#7c3aed','#a855f7','#d4af37','#f0c848','#ffffff','#4c1d95'];
+  const pieces = Array.from({length: 120}, () => ({
+    x:   Math.random() * canvas.width,
+    y:   -10 - Math.random() * 100,
+    w:   6 + Math.random() * 8,
+    h:   3 + Math.random() * 5,
+    rot: Math.random() * 360,
+    drot:(Math.random() - 0.5) * 8,
+    dy:  3 + Math.random() * 4,
+    dx:  (Math.random() - 0.5) * 3,
+    c:   colors[Math.floor(Math.random() * colors.length)],
+  }));
+
+  let frame = 0;
+  function draw() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    pieces.forEach(p => {
+      p.y  += p.dy; p.x += p.dx; p.rot += p.drot;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot * Math.PI/180);
+      ctx.fillStyle = p.c;
+      ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
+      ctx.restore();
+    });
+    frame++;
+    if (frame < 200) requestAnimationFrame(draw);
+    else canvas.style.display = 'none';
+  }
+  draw();
+}
+
+// ── File select ────────────────────────────────────────────────────────────
+function onFileSelect(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  state.filename = file.name;
+  document.getElementById('upload-filename').textContent = file.name;
+  document.getElementById('upload-filesize').textContent = formatBytes(file.size);
+  document.getElementById('upload-selected').classList.add('show');
+  document.getElementById('btn-upload').disabled = false;
+}
+
+function formatBytes(b) {
+  if (b < 1e6) return (b/1e3).toFixed(1) + ' KB';
+  return (b/1e6).toFixed(1) + ' MB';
+}
+
+// ── Upload ─────────────────────────────────────────────────────────────────
+async function startUpload() {
+  const file = document.getElementById('file-input').files[0];
+  if (!file) return;
+
+  document.getElementById('btn-upload').disabled = true;
+  document.getElementById('upload-progress-wrap').classList.add('show');
+  setProgress('upload', 0, 'Uploading...');
+
+  const fd = new FormData();
+  fd.append('video', file);
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/upload');
+  xhr.upload.onprogress = e => {
+    if (e.lengthComputable) setProgress('upload', (e.loaded/e.total)*85, 'Uploading...');
+  };
+  xhr.onload = () => {
+    const data = JSON.parse(xhr.responseText);
+    if (data.error) { alert(data.error); return; }
+    state.jobId = data.job_id;
+    setProgress('upload', 100, 'Analyzing audio...');
+    goToEditor(file);
+  };
+  xhr.onerror = () => alert('Upload failed. Check your connection.');
+  xhr.send(fd);
+}
+
+function goToEditor(file) {
+  const video = document.getElementById('editor-video');
+  video.src   = URL.createObjectURL(file);
+  document.getElementById('editor-filename').innerHTML = file.name + ' <span>— Editing</span>';
+
+  video.addEventListener('loadedmetadata', () => {
+    state.videoDuration = video.duration;
+    state.trimStart     = 0;
+    state.trimEnd       = video.duration;
+    setupScrubber();
+    setupTrimSliders();
+  }, {once: true});
+
+  goTo('editor');
+  startTranscriptPoll();
+}
+
+// ── Scrubber ───────────────────────────────────────────────────────────────
+function setupScrubber() {
+  const video    = document.getElementById('editor-video');
+  const scrubber = document.getElementById('video-scrubber');
+  scrubber.max   = video.duration;
+  scrubber.step  = 0.01;
+
+  video.addEventListener('timeupdate', () => {
+    scrubber.value = video.currentTime;
+    document.getElementById('time-display').textContent =
+      fmtTime(video.currentTime) + ' / ' + fmtTime(video.duration);
+  });
+}
+
+function scrubVideo(v) {
+  document.getElementById('editor-video').currentTime = parseFloat(v);
+}
+
+function togglePlay() {
+  const v = document.getElementById('editor-video');
+  const b = document.getElementById('play-btn');
+  if (v.paused) { v.play(); b.textContent = '⏸'; }
+  else          { v.pause(); b.textContent = '▶'; }
+}
+
+function fmtTime(s) {
+  const m = Math.floor(s/60);
+  const ss= Math.floor(s%60);
+  return m + ':' + ss.toString().padStart(2,'0');
+}
+
+// ── Trim sliders ───────────────────────────────────────────────────────────
+function setupTrimSliders() {
+  const dur = state.videoDuration;
+  const s   = document.getElementById('trim-start');
+  const e   = document.getElementById('trim-end');
+  s.max = dur; s.step = 0.1; s.value = 0;
+  e.max = dur; e.step = 0.1; e.value = dur;
+  document.getElementById('trim-start-val').textContent = fmtTime(0);
+  document.getElementById('trim-end-val').textContent   = fmtTime(dur);
+}
+
+function updateTrim() {
+  let s = parseFloat(document.getElementById('trim-start').value);
+  let e = parseFloat(document.getElementById('trim-end').value);
+  if (s >= e - 0.5) { s = e - 0.5; document.getElementById('trim-start').value = s; }
+  state.trimStart = s;
+  state.trimEnd   = e;
+  document.getElementById('trim-start-val').textContent = fmtTime(s);
+  document.getElementById('trim-end-val').textContent   = fmtTime(e);
+  document.getElementById('editor-video').currentTime   = s;
+  updateExportSummary();
+}
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    const names = ['trim','captions','audio','export'];
+    t.classList.toggle('active', names[i] === name);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  if (name === 'export') updateExportSummary();
+}
+
+// ── Toggles ────────────────────────────────────────────────────────────────
+function toggleSwitch(el) {
+  el.classList.toggle('on');
+  updateExportSummary();
+}
+
+// ── Caption style ──────────────────────────────────────────────────────────
+function selectCaptionStyle(el) {
+  document.querySelectorAll('.cap-style').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  state.captionStyle = el.dataset.style;
+}
+
+// ── Transcript poll ────────────────────────────────────────────────────────
+function startTranscriptPoll() {
+  document.getElementById('transcribing-banner').style.display = 'flex';
+
+  const poll = setInterval(async () => {
+    if (!state.jobId) { clearInterval(poll); return; }
+    try {
+      const r    = await fetch('/api/job/' + state.jobId);
+      const data = await r.json();
+      if (data.status === 'ready' || data.status === 'processing' || data.status === 'done') {
+        clearInterval(poll);
+        document.getElementById('transcribing-banner').style.display = 'none';
+        state.words = data.words || [];
+        renderWordList();
+      }
+    } catch(e) {}
+  }, 2000);
+}
+
+function renderWordList() {
+  const list = document.getElementById('word-list');
+  if (!state.words.length) {
+    list.innerHTML = '<p style="font-size:13px;color:var(--text-3);">No speech detected. Captions will be skipped.</p>';
+    return;
+  }
+  list.innerHTML = state.words.map((w, i) =>
+    `<span class="word-chip ${w.is_filler ? 'filler' : ''}" data-idx="${i}" onclick="toggleFiller(${i})">${w.word}</span>`
+  ).join('');
+}
+
+function toggleFiller(i) {
+  state.words[i].is_filler = !state.words[i].is_filler;
+  renderWordList();
+}
+
+// ── Music ──────────────────────────────────────────────────────────────────
+async function onMusicSelect(e) {
+  const file = e.target.files[0];
+  if (!file || !state.jobId) return;
+  state.musicFile = file;
+  document.getElementById('music-filename').textContent = file.name;
+  document.getElementById('music-selected').classList.add('show');
+
+  const fd = new FormData();
+  fd.append('music', file);
+  await fetch('/api/upload-music/' + state.jobId, {method:'POST', body:fd});
+}
+
+// ── Export summary ─────────────────────────────────────────────────────────
+function updateExportSummary() {
+  const opts    = getOptions();
+  const dur     = opts.trim_end - opts.trim_start;
+  const summary = [
+    `Clip length: ${fmtTime(dur)}`,
+    opts.captions         ? `Captions: ${opts.caption_style}` : 'Captions: off',
+    opts.remove_silences  ? 'Silence removal: on'  : '',
+    opts.noise_reduction  ? 'Noise reduction: on'  : '',
+    opts.add_music        ? 'Music: added'          : '',
+  ].filter(Boolean).join('<br>');
+  document.getElementById('export-summary').innerHTML = summary;
+}
+
+function getOptions() {
+  return {
+    trim_start:      state.trimStart,
+    trim_end:        state.trimEnd,
+    captions:        document.getElementById('toggle-captions').classList.contains('on'),
+    caption_style:   state.captionStyle,
+    remove_silences: document.getElementById('toggle-silence').classList.contains('on'),
+    noise_reduction: document.getElementById('toggle-noise').classList.contains('on'),
+    add_music:       document.getElementById('toggle-music').classList.contains('on'),
+    title:           document.getElementById('export-title').value.trim() || 'capcal',
+    words:           state.words.filter(w => !w.is_filler),
+  };
+}
+
+// ── Export ─────────────────────────────────────────────────────────────────
+async function startExport() {
+  if (!state.jobId) return;
+
+  const r = await fetch('/api/process/' + state.jobId, {
+    method:  'POST',
+    headers: {'Content-Type':'application/json'},
+    body:    JSON.stringify(getOptions()),
+  });
+  const data = await r.json();
+  if (data.error) { alert(data.error); return; }
+
+  goTo('processing');
+  pollProcessing();
+}
+
+function pollProcessing() {
+  const timer = setInterval(async () => {
+    if (!state.jobId) { clearInterval(timer); return; }
+    try {
+      const r    = await fetch('/api/job/' + state.jobId);
+      const data = await r.json();
+      updateProcessingUI(data);
+      if (data.status === 'done') {
+        clearInterval(timer);
+        state.stats.week++;
+        state.stats.total++;
+        saveStats();
+        setTimeout(() => { goTo('done'); launchConfetti(); }, 600);
+      }
+      if (data.status === 'error') {
+        clearInterval(timer);
+        alert('Something went wrong: ' + (data.error || 'Unknown error'));
+        goTo('editor');
+      }
+    } catch(e) {}
+  }, 1500);
+}
+
+function updateProcessingUI(data) {
+  const pct  = data.progress || 0;
+  const step = data.step || '';
+  document.getElementById('processing-fill').style.width = pct + '%';
+  document.getElementById('processing-pct').textContent  = pct + '%';
+
+  const steps = document.querySelectorAll('#steps-list .step-item');
+  let activeFound = false;
+  steps.forEach(s => {
+    const match = step === s.dataset.step || step.includes(s.dataset.step.replace('...',''));
+    if (!activeFound && !s.classList.contains('done')) {
+      if (match) {
+        s.classList.add('active');
+        activeFound = true;
+      }
+    }
+    if (!match && s.classList.contains('active') && !activeFound) {
+      s.classList.remove('active');
+      s.classList.add('done');
+      s.querySelector('.step-dot').textContent = '✓';
+    }
+  });
+
+  if (data.status === 'done') {
+    steps.forEach(s => {
+      s.classList.remove('active');
+      s.classList.add('done');
+      s.querySelector('.step-dot').textContent = '✓';
+    });
+  }
+}
+
+// ── Download ───────────────────────────────────────────────────────────────
+function downloadVideo() {
+  if (!state.jobId) return;
+  const a = document.createElement('a');
+  a.href  = '/api/download/' + state.jobId;
+  a.download = '';
+  a.click();
+  setTimeout(() => cleanup(), 5000);
+}
+
+async function cleanup() {
+  if (!state.jobId) return;
+  try { await fetch('/api/cleanup/' + state.jobId, {method:'DELETE'}); } catch(e) {}
+  state.jobId = null;
+}
+
+function editAnother() {
+  cleanup();
+  state.words     = [];
+  state.filename  = '';
+  state.trimStart = 0;
+  state.trimEnd   = 0;
+  document.getElementById('file-input').value       = '';
+  document.getElementById('upload-selected').classList.remove('show');
+  document.getElementById('upload-progress-wrap').classList.remove('show');
+  document.getElementById('btn-upload').disabled    = true;
+  document.getElementById('word-list').innerHTML    = '<p style="font-size:13px;color:var(--text-3);">Transcript will appear here.</p>';
+  document.getElementById('music-selected').classList.remove('show');
+  document.getElementById('toggle-silence').classList.remove('on');
+  document.getElementById('toggle-noise').classList.remove('on');
+  document.getElementById('toggle-music').classList.remove('on');
+  document.getElementById('toggle-captions').classList.add('on');
+  document.querySelectorAll('#steps-list .step-item').forEach(s => {
+    s.classList.remove('active','done');
+    s.querySelector('.step-dot').textContent = '';
+  });
+  refreshStats();
+  goTo('upload');
+}
+
+// ── Progress helper ────────────────────────────────────────────────────────
+function setProgress(type, pct, label) {
+  if (type === 'upload') {
+    document.getElementById('upload-progress-fill').style.width = pct + '%';
+    document.getElementById('upload-progress-label').textContent = label;
+  }
+}
+
+// ── PWA service worker ─────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+refreshStats();
+</script>
+</body>
+</html>
