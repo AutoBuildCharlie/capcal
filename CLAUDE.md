@@ -12,9 +12,9 @@
 ---
 
 ## What It Is
-A mobile-first PWA video editor for iPhone. Built for Cal to edit short-form content (TikTok/YouTube Shorts). Alternative to CapCut — simpler, premium design (dark bg, purple + gold), AI-powered. Videos are processed server-side via FFmpeg. Captions transcribed via Deepgram Nova-3.
+A mobile-first PWA video editor for iPhone. Built for Cal to edit short-form content (TikTok/YouTube Shorts). Alternative to CapCut — cleaner, focused feature set. Premium white + dark purple design. Videos are processed server-side via FFmpeg. Captions transcribed via Deepgram Nova-3.
 
-Colors: Dark background (#07071a), Purple (#7c3aed), Gold (#d4af37), White.
+Colors: White background (#ffffff), Dark purple (#3b0764), Purple (#5b21b6), Light purple (#ede9fe), Black text (#111111).
 
 ---
 
@@ -99,12 +99,15 @@ Stats (videos this week / all time) saved to `localStorage`.
 
 ### Phase 1 — Current (MVP)
 - Upload video
-- Trim start/end
-- Auto captions (Deepgram Nova-3)
+- Timeline with filmstrip + waveform + drag handles to trim
+- Split clips at playhead — multi-clip editing
+- Auto captions (Deepgram Nova-3) — inline word editing (tap to edit/delete)
 - Remove silences
 - Noise reduction
-- Add music
 - Export MP4
+- White + dark purple premium theme
+- Bottom toolbar navigation (Captions / Audio / Export)
+- No music (removed)
 
 ### Phase 2
 - Background removal (TensorFlow.js)

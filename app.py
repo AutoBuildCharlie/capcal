@@ -7,6 +7,7 @@ import os
 import re
 import time
 import uuid
+import json
 import shutil
 import subprocess
 import threading
@@ -28,6 +29,92 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY', '')
+
+# ── App settings (persisted to settings.json, editable from the UI) ────────
+_settings_file = ROOT / 'settings.json'
+_settings_lock = threading.Lock()
+
+def _load_settings() -> dict:
+    with _settings_lock:
+        try:
+            if _settings_file.exists():
+                return json.loads(_settings_file.read_text())
+        except Exception:
+            pass
+        return {}
+
+def _save_settings(patch: dict):
+    with _settings_lock:
+        try:
+            current = {}
+            if _settings_file.exists():
+                current = json.loads(_settings_file.read_text())
+            current.update(patch)
+            _settings_file.write_text(json.dumps(current))
+        except Exception as e:
+            app.logger.error('Failed to save settings: %s', e)
+
+IG_USERNAME      = os.getenv('IG_USERNAME', '')
+IG_PASSWORD      = os.getenv('IG_PASSWORD', '')
+TIKTOK_COOKIES   = os.getenv('TIKTOK_COOKIES', '')
+TIKTOK_USERNAME  = os.getenv('TIKTOK_USERNAME', '')
+TIKTOK_PASSWORD  = os.getenv('TIKTOK_PASSWORD', '')
+
+# Optional social posting packages — app works fine without them
+try:
+    from instagrapi import Client as _IgClient
+    _IG_AVAILABLE = True
+except ImportError:
+    _IG_AVAILABLE = False
+
+try:
+    from tiktok_uploader.upload import upload_video as _tt_upload
+    _TT_AVAILABLE = True
+except ImportError:
+    _TT_AVAILABLE = False
+
+try:
+    import rookiepy as _rookiepy
+    _ROOKIEPY_AVAILABLE = True
+except ImportError:
+    _ROOKIEPY_AVAILABLE = False
+
+
+def _browser_cookies(domain):
+    """Pull cookies for a domain from any installed browser. Returns list of dicts."""
+    if not _ROOKIEPY_AVAILABLE:
+        return []
+    try:
+        return _rookiepy.load([domain])
+    except Exception:
+        return []
+
+def _ig_sessionid_from_browser():
+    """Return Instagram sessionid cookie value from the user's browser, or None."""
+    for c in _browser_cookies('instagram.com'):
+        if c.get('name') == 'sessionid':
+            return c.get('value')
+    return None
+
+def _tt_cookies_from_browser():
+    """Return TikTok cookies list from the user's browser (empty if not logged in)."""
+    return _browser_cookies('tiktok.com')
+
+def _ig_creds():
+    """Return (username, password) — UI settings take priority over .env."""
+    s = _load_settings()
+    return (s.get('ig_username') or IG_USERNAME,
+            s.get('ig_password') or IG_PASSWORD)
+
+def _tt_creds():
+    """Return (username, password) for TikTok from settings or .env."""
+    s = _load_settings()
+    return (s.get('tt_username') or TIKTOK_USERNAME,
+            s.get('tt_password') or TIKTOK_PASSWORD)
+
+_ig_client     = None
+_ig_client_lock = threading.Lock()
+_ig_session    = ROOT / 'ig_session.json'
 
 # UUID v4 validation — prevents path traversal via crafted job_id
 _UUID_RE = re.compile(
@@ -152,6 +239,8 @@ def transcribe(audio_path: Path) -> list:
     words = []
     try:
         alts = resp.json()['results']['channels'][0]['alternatives']
+        if not alts:
+            return []
         for w in alts[0].get('words', []):
             # Sanitize to prevent ASS subtitle injection
             word_text = re.sub(r'[{}\n\r]', '', w.get('word', ''))
@@ -208,8 +297,9 @@ _ASPECT_RES = {'9:16': (1080, 1920), '1:1': (1080, 1080), '16:9': (1920, 1080)}
 
 
 def generate_ass(words, style='classic', pos_x=0.5, pos_y=0.85,
-                 res_x=1080, res_y=1920) -> str:
+                 res_x=1080, res_y=1920, scale=1.0) -> str:
     s = CAPTION_STYLES.get(style, CAPTION_STYLES['classic'])
+    scaled_size = max(20, int(s['size'] * scale))
     ass_x = round(pos_x * res_x)
     ass_y = round(pos_y * res_y)
     pos_tag = f'{{\\an5\\pos({ass_x},{ass_y})}}'
@@ -218,7 +308,7 @@ def generate_ass(words, style='classic', pos_x=0.5, pos_y=0.85,
         f"[Script Info]\nScriptType: v4.00+\nPlayResX: {res_x}\nPlayResY: {res_y}\nWrapStyle: 0\n\n"
         f"[V4+ Styles]\n"
         f"Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,{s['font']},{s['size']},{s['primary']},&H000000FF,{s['outline']},{s['back']},{s['bold']},0,0,0,100,100,0,0,1,3,1,5,10,10,0,1\n\n"
+        f"Style: Default,{s['font']},{scaled_size},{s['primary']},&H000000FF,{s['outline']},{s['back']},{s['bold']},0,0,0,100,100,0,0,1,3,1,5,10,10,0,1\n\n"
         f"[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
     lines = ''
@@ -298,26 +388,67 @@ def do_process(job_id: str, options: dict):
         def step(msg, pct):
             job_set(job_id, step=msg, progress=pct)
 
-        # 1 — Trim
+        # 1 — Trim / multi-clip concat
         step('Trimming video...', 10)
-        t_start = float(options.get('trim_start', 0))
-        t_end   = options.get('trim_end')
-        if t_start > 0 or t_end:
-            trimmed = job_dir / 'trimmed.mp4'
-            # Input-side seek (-ss before -i) for frame-accurate trim
-            args = []
-            if t_start:
-                args += ['-ss', str(t_start)]
-            args += ['-i', str(current)]
-            if t_end:
-                args += ['-t', str(float(t_end) - t_start)]
-            args += ['-c', 'copy', '-y', str(trimmed)]
-            run_ffmpeg(args)
-            current = trimmed
-            te = float(t_end) if t_end else float('inf')
-            words = [dict(w, start=max(0, w['start']-t_start),
-                          end=max(0, w['end']-t_start))
-                     for w in words if w['end'] > t_start and w['start'] < te]
+        clips = options.get('clips', [])
+        if clips and len(clips) > 1:
+            # Multiple clips — extract each segment then concatenate
+            tmp_clips = job_dir / 'tmp_clips'
+            tmp_clips.mkdir(exist_ok=True)
+            parts = []
+            new_words = []
+            t_offset = 0.0
+            for i, clip in enumerate(clips):
+                cs = float(clip.get('start', 0))
+                ce = float(clip.get('end', 999))
+                part = tmp_clips / f'clip_{i}.mp4'
+                run_ffmpeg(['-ss', str(cs), '-i', str(current),
+                            '-t', str(ce - cs), '-c:v', 'libx264', '-c:a', 'aac',
+                            '-y', str(part)])
+                for w in words:
+                    if cs <= w['start'] < ce:
+                        new_words.append(dict(w,
+                            start=round(t_offset + w['start'] - cs, 3),
+                            end=round(t_offset + min(w['end'], ce) - cs, 3)))
+                t_offset += ce - cs
+                parts.append(part)
+            concat_list = tmp_clips / 'list.txt'
+            concat_list.write_text('\n'.join(f"file '{p.as_posix()}'" for p in parts))
+            joined = job_dir / 'joined.mp4'
+            run_ffmpeg(['-f', 'concat', '-safe', '0', '-i', str(concat_list),
+                        '-c', 'copy', '-y', str(joined)])
+            shutil.rmtree(tmp_clips, ignore_errors=True)
+            current = joined
+            words = new_words
+        elif clips and len(clips) == 1:
+            # Single clip — standard trim
+            cs = float(clips[0].get('start', 0))
+            ce = float(clips[0].get('end', 999))
+            if cs > 0 or ce < 99999:
+                trimmed = job_dir / 'trimmed.mp4'
+                args = []
+                if cs: args += ['-ss', str(cs)]
+                args += ['-i', str(current), '-t', str(ce - cs), '-c', 'copy', '-y', str(trimmed)]
+                run_ffmpeg(args)
+                current = trimmed
+                words = [dict(w, start=max(0, w['start']-cs), end=max(0, w['end']-cs))
+                         for w in words if w['end'] > cs and w['start'] < ce]
+        else:
+            # Legacy fallback: trim_start / trim_end
+            t_start = float(options.get('trim_start', 0))
+            t_end   = options.get('trim_end')
+            if t_start > 0 or t_end:
+                trimmed = job_dir / 'trimmed.mp4'
+                args = []
+                if t_start: args += ['-ss', str(t_start)]
+                args += ['-i', str(current)]
+                if t_end: args += ['-t', str(float(t_end) - t_start)]
+                args += ['-c', 'copy', '-y', str(trimmed)]
+                run_ffmpeg(args)
+                current = trimmed
+                te = float(t_end) if t_end else float('inf')
+                words = [dict(w, start=max(0, w['start']-t_start), end=max(0, w['end']-t_start))
+                         for w in words if w['end'] > t_start and w['start'] < te]
 
         # 2 — Remove silences
         if options.get('remove_silences') and words:
@@ -334,20 +465,31 @@ def do_process(job_id: str, options: dict):
                         '-c:v', 'copy', '-y', str(den)])
             current = den
 
-        # 4 — Add music
-        music_ext  = job_get(job_id).get('music_ext', '')
-        music_path = job_dir / f'music{music_ext}'
-        if music_path.exists() and options.get('add_music'):
-            step('Adding music...', 58)
-            music_out = job_dir / 'with_music.mp4'
-            run_ffmpeg(['-i', str(current), '-i', str(music_path),
-                        '-filter_complex',
-                        '[0:a][1:a]amix=inputs=2:duration=first:weights=1 0.25',
-                        '-c:v', 'copy', '-y', str(music_out)])
-            current = music_out
+        # 4 — Speed adjustment
+        speed = float(options.get('speed', 1.0))
+        if abs(speed - 1.0) > 0.01:
+            step('Adjusting speed...', 55)
+            sped = job_dir / 'sped.mp4'
+            inv = 1.0 / speed
+            vf = f'setpts={inv:.4f}*PTS'
+            # atempo only supports 0.5–2.0; chain for values outside that range
+            if speed < 0.5:
+                af = f'atempo=0.5,atempo={speed/0.5:.4f}'
+            elif speed > 2.0:
+                af = f'atempo=2.0,atempo={speed/2.0:.4f}'
+            else:
+                af = f'atempo={speed:.4f}'
+            run_ffmpeg(['-i', str(current),
+                        '-vf', vf, '-af', af,
+                        '-c:v', 'libx264', '-c:a', 'aac',
+                        '-y', str(sped)])
+            current = sped
+            # Adjust word timestamps to match new speed
+            words = [dict(w, start=round(w['start']/speed, 3),
+                          end=round(w['end']/speed, 3)) for w in words]
 
         # 5 — Final encode: combine scale + captions in one pass (avoids double-encode)
-        step('Exporting...', 70)
+        step('Exporting...', 65)
         aspect = options.get('aspect_ratio', '9:16')
         res_x, res_y = _ASPECT_RES.get(aspect, (1080, 1920))
 
@@ -368,15 +510,61 @@ def do_process(job_id: str, options: dict):
                 pos_y = max(0.0, min(1.0, float(pos.get('y', 0.85))))
             except (ValueError, TypeError):
                 pos_x, pos_y = 0.5, 0.85
+            try:
+                cap_scale = max(0.3, min(3.0, float(options.get('caption_scale', 1.0))))
+            except (ValueError, TypeError):
+                cap_scale = 1.0
             ass_path.write_text(generate_ass(
                 words,
                 options.get('caption_style', 'classic'),
                 pos_x, pos_y,
                 res_x=res_x, res_y=res_y,
+                scale=cap_scale,
             ))
             # Backslashes → forward slashes first, then escape drive colon
             ass_safe = str(ass_path).replace('\\', '/').replace(':', '\\:')
             vf_parts.append(f"ass='{ass_safe}'")
+
+        # Text overlays — burned via drawtext filter
+        for ov in options.get('text_overlays', []):
+            try:
+                raw_text = str(ov.get('text', '')).strip()
+                if not raw_text:
+                    continue
+                # Escape chars that break FFmpeg drawtext: \ ' : % { } [ ] newlines
+                safe_text = (raw_text
+                             .replace('\\', '\\\\')
+                             .replace("'", "\u2019")   # curly apostrophe — safe in drawtext
+                             .replace(':', '\\:')
+                             .replace('%', '\\%')
+                             .replace('{', '\\{')
+                             .replace('}', '\\}')
+                             .replace('[', '\\[')
+                             .replace(']', '\\]')
+                             .replace('\n', ' ')
+                             .replace('\r', ''))
+                x_pct  = max(0.0, min(1.0, float(ov.get('x', 0.5))))
+                y_pct  = max(0.0, min(1.0, float(ov.get('y', 0.3))))
+                fsz    = max(20, int(float(ov.get('size', 1.0)) * 72))
+                # Accept named colors or #rrggbb — strip anything dangerous
+                color  = re.sub(r'[^#a-zA-Z0-9]', '', str(ov.get('color', 'white')))[:20] or 'white'
+                # Convert #rrggbb → 0xrrggbb for FFmpeg drawtext
+                if color.startswith('#') and len(color) == 7:
+                    color = '0x' + color[1:]
+                t0 = max(0.0, float(ov.get('startTime', 0)))
+                t1 = max(t0 + 0.1, float(ov.get('endTime', 5)))
+                dt = (f"drawtext=text='{safe_text}'"
+                      f":x=w*{x_pct:.4f}-text_w/2"
+                      f":y=h*{y_pct:.4f}-text_h/2"
+                      f":fontsize={fsz}"
+                      f":fontcolor={color}"
+                      )
+                if ov.get('background'):
+                    dt += ':box=1:boxcolor=black@0.5:boxborderw=10'
+                dt += f":enable='between(t,{t0:.3f},{t1:.3f})'"
+                vf_parts.append(dt)
+            except (ValueError, TypeError, KeyError):
+                continue   # skip malformed overlay, don't abort the whole export
 
         quality_map = {
             'low':    ('28', 'ultrafast'),
@@ -551,6 +739,204 @@ def cleanup(job_id):
     with _lock:
         _jobs.pop(job_id, None)
     return jsonify({'status': 'cleaned'})
+
+
+# ── Social posting helpers ─────────────────────────────────────────────────
+
+def _get_ig_client():
+    """Return a logged-in instagrapi Client, reusing cached session."""
+    global _ig_client
+    with _ig_client_lock:
+        if _ig_client is not None:
+            return _ig_client
+        cl = _IgClient()
+
+        # 1 — Try saved session file (fastest, no network call to login)
+        if _ig_session.exists():
+            try:
+                cl.load_settings(str(_ig_session))
+                cl.get_timeline_feed()
+                _ig_client = cl
+                return cl
+            except Exception:
+                pass
+
+        # 2 — Try browser sessionid (user already logged in on their PC)
+        sid = _ig_sessionid_from_browser()
+        if sid:
+            try:
+                cl.login_by_sessionid(sid)
+                cl.dump_settings(str(_ig_session))
+                _ig_client = cl
+                return cl
+            except Exception:
+                pass
+
+        # 3 — Saved credentials (from UI settings or .env)
+        usr, pwd = _ig_creds()
+        if usr and pwd:
+            cl.login(usr, pwd)
+            cl.dump_settings(str(_ig_session))
+            _ig_client = cl
+            return cl
+
+        raise RuntimeError('No Instagram credentials. Add them in CapCal Settings.')
+
+
+# ── Social posting routes ──────────────────────────────────────────────────
+
+@app.route('/api/post-config')
+def post_config():
+    """Connection status for each platform, plus saved usernames for display."""
+    ig_usr, ig_pwd = _ig_creds()
+    tt_usr, tt_pwd = _tt_creds()
+    ig_ready = _IG_AVAILABLE and (
+        _ig_session.exists() or
+        bool(_ig_sessionid_from_browser()) or
+        bool(ig_usr and ig_pwd)
+    )
+    tt_ready = _TT_AVAILABLE and (
+        bool(_tt_cookies_from_browser()) or
+        (bool(TIKTOK_COOKIES) and Path(TIKTOK_COOKIES).exists()) or
+        bool(tt_usr and tt_pwd)
+    )
+    return jsonify({
+        'instagram': ig_ready, 'ig_username': ig_usr or '',
+        'tiktok':    tt_ready, 'tt_username': tt_usr or '',
+    })
+
+
+@app.route('/api/settings/connect', methods=['POST'])
+def settings_connect():
+    """Save credentials from the UI and verify the Instagram login works."""
+    data     = request.get_json(silent=True) or {}
+    platform = data.get('platform', '')
+
+    if platform == 'instagram':
+        if not _IG_AVAILABLE:
+            return jsonify({'error': 'instagrapi not installed'}), 500
+        usr = str(data.get('username', '')).strip()
+        pwd = str(data.get('password', '')).strip()
+        if not usr or not pwd:
+            return jsonify({'error': 'Username and password required'}), 400
+        try:
+            global _ig_client
+            cl = _IgClient()
+            cl.login(usr, pwd)
+            cl.dump_settings(str(_ig_session))
+            with _ig_client_lock:
+                _ig_client = cl
+            _save_settings({'ig_username': usr, 'ig_password': pwd})
+            return jsonify({'status': 'connected', 'username': usr})
+        except Exception as exc:
+            return jsonify({'error': str(exc)[:200]}), 400
+
+    elif platform == 'tiktok':
+        usr = str(data.get('username', '')).strip()
+        pwd = str(data.get('password', '')).strip()
+        if not usr or not pwd:
+            return jsonify({'error': 'Username and password required'}), 400
+        _save_settings({'tt_username': usr, 'tt_password': pwd})
+        return jsonify({'status': 'saved', 'username': usr})
+
+    return jsonify({'error': 'Unknown platform'}), 400
+
+
+@app.route('/api/settings/disconnect', methods=['POST'])
+def settings_disconnect():
+    data     = request.get_json(silent=True) or {}
+    platform = data.get('platform', '')
+    if platform == 'instagram':
+        global _ig_client
+        with _ig_client_lock:
+            _ig_client = None
+        if _ig_session.exists():
+            _ig_session.unlink(missing_ok=True)
+        _save_settings({'ig_username': '', 'ig_password': ''})
+    elif platform == 'tiktok':
+        _save_settings({'tt_username': '', 'tt_password': ''})
+    return jsonify({'status': 'disconnected'})
+
+
+@app.route('/api/post/instagram/<job_id>', methods=['POST'])
+def post_instagram(job_id):
+    if not valid_job_id(job_id):
+        return jsonify({'error': 'Invalid job ID'}), 400
+    if not _IG_AVAILABLE:
+        return jsonify({'error': 'instagrapi not installed — run: pip install instagrapi'}), 500
+    if not IG_USERNAME or not IG_PASSWORD:
+        return jsonify({'error': 'Set IG_USERNAME and IG_PASSWORD in your .env file'}), 400
+    job = job_get(job_id)
+    if not job or job.get('status') != 'done':
+        return jsonify({'error': 'Job not ready'}), 400
+    path = OUTPUT_DIR / job_id / job.get('filename', '')
+    if not path.exists():
+        return jsonify({'error': 'Video file not found'}), 404
+
+    data    = request.get_json(silent=True) or {}
+    caption = str(data.get('caption', ''))[:2200]   # Instagram caption limit
+
+    job_set(job_id, ig_status='posting')
+
+    def do_ig():
+        try:
+            cl = _get_ig_client()
+            cl.clip_upload(str(path), caption=caption)
+            job_set(job_id, ig_status='done')
+        except Exception as exc:
+            global _ig_client
+            _ig_client = None       # force re-login on next attempt
+            job_set(job_id, ig_status='error', ig_error=str(exc)[:300])
+
+    threading.Thread(target=do_ig, daemon=True).start()
+    return jsonify({'status': 'posting'})
+
+
+@app.route('/api/post/tiktok/<job_id>', methods=['POST'])
+def post_tiktok(job_id):
+    if not valid_job_id(job_id):
+        return jsonify({'error': 'Invalid job ID'}), 400
+    if not _TT_AVAILABLE:
+        return jsonify({'error': 'tiktok-uploader not installed — run: pip install tiktok-uploader'}), 500
+
+    # Resolve auth: browser cookies → .env cookies path → username/password
+    browser_cookies = _tt_cookies_from_browser()
+    if browser_cookies:
+        cookies_arg, user_arg, pass_arg = browser_cookies, None, None
+    elif TIKTOK_COOKIES and Path(TIKTOK_COOKIES).exists():
+        cookies_arg, user_arg, pass_arg = TIKTOK_COOKIES, None, None
+    else:
+        tt_usr, tt_pwd = _tt_creds()
+        if tt_usr and tt_pwd:
+            cookies_arg, user_arg, pass_arg = None, tt_usr, tt_pwd
+        else:
+            return jsonify({'error': 'Add TikTok credentials in CapCal Settings.'}), 400
+
+    job = job_get(job_id)
+    if not job or job.get('status') != 'done':
+        return jsonify({'error': 'Job not ready'}), 400
+    path = OUTPUT_DIR / job_id / job.get('filename', '')
+    if not path.exists():
+        return jsonify({'error': 'Video file not found'}), 404
+
+    data    = request.get_json(silent=True) or {}
+    caption = str(data.get('caption', ''))[:2200]
+
+    job_set(job_id, tt_status='posting')
+
+    def do_tt():
+        try:
+            if cookies_arg is not None:
+                _tt_upload(str(path), description=caption, cookies=cookies_arg)
+            else:
+                _tt_upload(str(path), description=caption,
+                           username=user_arg, password=pass_arg)
+            job_set(job_id, tt_status='done')
+        except Exception as exc:
+            job_set(job_id, tt_status='error', tt_error=str(exc)[:300])
+
+    threading.Thread(target=do_tt, daemon=True).start()
+    return jsonify({'status': 'posting'})
 
 
 if __name__ == '__main__':
