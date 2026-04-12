@@ -2,6 +2,3 @@ flask
 python-dotenv
 httpx
 gunicorn
-instagrapi
-tiktok-uploader
-rookiepy
