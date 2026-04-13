@@ -123,6 +123,15 @@ Stats (videos this week / all time) saved to `localStorage`.
 
 ---
 
+## Deployment
+- **Live URL:** `web-production-7540a.up.railway.app`
+- **Hosting:** Railway (auto-deploys on push to AutoBuildCharlie/capcal)
+- **GitHub repo:** `AutoBuildCharlie/capcal` (also mirrored at `Cal-Zentara/CapCal`)
+- **Railway account:** aestheticcal22@gmail.com
+- **gh CLI active account:** AutoBuildCharlie (needed for pushes)
+
+---
+
 ## Known Decisions
 - Server-side FFmpeg instead of FFmpeg.wasm — more reliable on iPhone Safari
 - Deepgram Nova-3 for transcription — best accuracy + word timestamps by default
