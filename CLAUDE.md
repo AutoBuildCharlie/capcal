@@ -1,5 +1,19 @@
 # CapCal — AI Video Editor
 
+## Quick Nav — Read First
+
+| I'm doing... | Read only... |
+|---|---|
+| Continuing work / resuming | `STATUS.md` |
+| Fixing a bug | `STATUS.md` + Processing Pipeline / API Routes section |
+| Adding a feature | `STATUS.md` + Phase Roadmap + relevant file (`app.py` or `static/index.html`) |
+| Deploying | Deployment section (Railway, AutoBuildCharlie push) |
+| Understanding the whole project | This CLAUDE.md in full |
+
+**Do not explore.** If the answer isn't in the files above, ask before searching.
+
+---
+
 ## Table of Contents
 1. [What It Is](#what-it-is)
 2. [How to Run](#how-to-run)
